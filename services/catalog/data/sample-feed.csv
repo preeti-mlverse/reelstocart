@@ -1,0 +1,10 @@
+source_id,title,category,product_url,image,brand,color,pattern,silhouette,sizes,price_inr,mrp_inr,availability
+F001,Rust Linen Wrap Dress,dresses,https://example.com/p/F001,https://placehold.co/400x600.png?text=F001,FeedBrand,maroon,solid,a_line,S|M|L,1799,2499,in stock
+F002,Sage Puff Sleeve Top,top,https://example.com/p/F002,https://placehold.co/400x600.png?text=F002,FeedBrand,green,solid,fitted,XS|S|M,749,999,in_stock
+F003,Indigo Wide-leg Jeans,denim,https://example.com/p/F003,https://placehold.co/400x600.png?text=F003,FeedBrand,navy,solid,wide_leg,28|30|32,1899,,available
+F004,Striped Oversized Shirt,shirts,https://example.com/p/F004,https://placehold.co/400x600.png?text=F004,FeedBrand,blue,stripe,oversized,M|L|XL,1299,1599,in stock
+F005,Pleated Midi Skirt,skirt,https://example.com/p/F005,https://placehold.co/400x600.png?text=F005,FeedBrand,black,solid,flared,S|M|L,1099,,in stock
+F006,Boho Beach Sarong,sarong,https://example.com/p/F006,https://placehold.co/400x600.png?text=F006,FeedBrand,pink,floral,,S|M,599,,in stock
+F007,Mystery Item No Image,top,https://example.com/p/F007,,FeedBrand,white,solid,fitted,S|M,499,,in stock
+F001,Rust Linen Wrap Dress DUPLICATE,dresses,https://example.com/p/F001,https://placehold.co/400x600.png?text=dup,FeedBrand,maroon,solid,a_line,S|M|L,1799,2499,in stock
+F008,Tan Tailored Blazer,blazer,https://example.com/p/F008,https://placehold.co/400x600.png?text=F008,FeedBrand,beige,solid,oversized,S|M|L|XL,2699,3299,in stock
