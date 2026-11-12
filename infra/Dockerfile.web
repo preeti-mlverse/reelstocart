@@ -1,0 +1,26 @@
+# Next.js web app (pnpm monorepo).
+FROM node:20-slim AS base
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+WORKDIR /repo
+
+# --- deps ---
+FROM base AS deps
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
+COPY apps/web/package.json apps/web/package.json
+COPY packages/schemas/package.json packages/schemas/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY services/search/package.json services/search/package.json
+RUN pnpm install --frozen-lockfile=false
+
+# --- build ---
+FROM deps AS build
+COPY . .
+RUN pnpm --filter web build
+
+# --- runtime ---
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build /repo /repo
+WORKDIR /repo/apps/web
+EXPOSE 3000
+CMD ["pnpm", "start"]

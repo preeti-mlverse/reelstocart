@@ -1,0 +1,39 @@
+# deps
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# build
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# env & secrets  — NEVER commit real credentials
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# data & media (user uploads, model weights, local object storage)
+/data/
+/storage/
+*.pt
+*.onnx
+*.safetensors
+
+# logs
+*.log
+logs/
+
+# os
+.DS_Store
+Thumbs.db
+
+# test / coverage
+coverage/
+.vitest/

@@ -1,0 +1,9 @@
+# Normalize line endings to LF in the repo (cross-platform consistency).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.mp4 binary
+*.ico binary
+pnpm-lock.yaml -diff linguist-generated
