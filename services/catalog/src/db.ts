@@ -65,7 +65,7 @@ export async function importToDb(
        RETURNING id, (xmax = 0) AS inserted`,
       [merchantId, p.source_id, p.title, p.category, p.description ?? null, p.product_url,
        p.source_attribution, p.color ?? null, p.pattern ?? null, p.fabric ?? null, p.silhouette ?? null,
-       JSON.stringify({ ...p, merchant: merchant.slug, is_sample: false })],
+       JSON.stringify({ ...p, id: p.source_id, merchant: merchant.name, is_sample: false })],
     );
     const productId = pr.rows[0]!.id as string;
     if (pr.rows[0]!.inserted) inserted++; else updated++;
