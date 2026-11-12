@@ -1,6 +1,7 @@
 export * from "./matcher";
 export * from "./composer";
 export * from "./hybrid";
+export * from "./pgvector";
 
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";

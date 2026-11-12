@@ -3,7 +3,7 @@
  * image bytes -> vision service (garments+attributes) -> matcher over catalogue.
  */
 import {
-  matchGarment, rerankHybrid, loadSeedCatalogue, loadSeedEmbeddings,
+  matchGarment, rerankHybrid, rerankWithVisual, annSearch, loadSeedCatalogue, loadSeedEmbeddings,
   type QueryGarment, type ScoredMatch, type MatchFilters, type SeedProduct, type EmbeddingMap,
 } from "@rtc/search";
 
@@ -13,15 +13,44 @@ let _embeddings: EmbeddingMap | null = null;
 const catalogue = () => (_catalogue ??= loadSeedCatalogue());
 const embeddings = () => (_embeddings ??= loadSeedEmbeddings());
 
-/** Hybrid when the garment has a visual embedding + we have product embeddings; else attribute-only. */
-function matchFor(g: VisionGarment, filters: MatchFilters): ScoredMatch[] {
-  const emb = embeddings();
+// Optional pgvector retrieval (Phase 7). Enabled by USE_PGVECTOR=true + DATABASE_URL.
+const usePgvector = () => process.env.USE_PGVECTOR === "true" && !!process.env.DATABASE_URL;
+let _pool: unknown = null;
+async function getPool() {
+  if (!_pool) {
+    const pg = await import("pg");
+    const { Pool } = pg.default ?? (pg as any);
+    _pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  }
+  return _pool as { query(t: string, p?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
+}
+
+/**
+ * Retrieval strategy per garment:
+ *  1. pgvector ANN -> hybrid rerank (when enabled & the garment has an embedding)
+ *  2. in-process hybrid (embedding + precomputed vectors)
+ *  3. attribute-only (no embedding)
+ * Each step falls back to the next on failure, so the request never dies on infra.
+ */
+async function matchFor(g: VisionGarment, filters: MatchFilters): Promise<ScoredMatch[]> {
   const q: QueryGarment = { category: g.category, attributes: g.attributes };
+  if (g.embedding && usePgvector()) {
+    try {
+      const pool = await getPool();
+      const candidates = await annSearch(pool, g.embedding, { category: g.category, limit: 100 });
+      if (candidates.length) return rerankWithVisual(q, candidates, filters, undefined, 12);
+    } catch {
+      /* fall through to in-process */
+    }
+  }
+  const emb = embeddings();
   if (g.embedding && Object.keys(emb).length > 0) {
     return rerankHybrid(q, g.embedding, catalogue(), emb, filters, undefined, 12);
   }
   return matchGarment(q, catalogue(), filters, 12);
 }
+
+export const retrievalMode = () => (usePgvector() ? "pgvector" : "in_process");
 
 export interface VisionGarment {
   garment_id: string;
@@ -53,6 +82,7 @@ export interface SearchOutput {
   model: VisionResponse["model"];
   cost_usd: number;
   warnings: string[];
+  retrieval: string;
   results: GarmentWithMatches[];
 }
 
@@ -104,6 +134,7 @@ export interface VideoSearchOutput {
   model: { name: string; mode: string };
   cost_usd: number;
   warnings: string[];
+  retrieval: string;
   frames_selected: VisionVideoResponse["frames_selected"];
   outfits: OutfitWithMatches[];
 }
@@ -134,16 +165,20 @@ export async function runVideoSearch(
   mime?: string,
 ): Promise<VideoSearchOutput> {
   const vision = await analyzeVideo(visionUrl, bytes, filename, mime);
-  const outfits: OutfitWithMatches[] = vision.outfits.map((o) => ({
-    outfit_id: o.outfit_id,
-    timestamp: o.timestamp,
-    scene_change: o.scene_change,
-    representative_frame_b64: o.representative_frame_b64,
-    image_quality: o.image_quality,
-    garments: o.garments.map((g) => ({ garment: g, matches: matchFor(g, filters) })),
-  }));
+  const outfits: OutfitWithMatches[] = await Promise.all(
+    vision.outfits.map(async (o) => ({
+      outfit_id: o.outfit_id,
+      timestamp: o.timestamp,
+      scene_change: o.scene_change,
+      representative_frame_b64: o.representative_frame_b64,
+      image_quality: o.image_quality,
+      garments: await Promise.all(
+        o.garments.map(async (g) => ({ garment: g, matches: await matchFor(g, filters) })),
+      ),
+    })),
+  );
   return { model: vision.model, cost_usd: vision.cost_usd, warnings: vision.warnings,
-           frames_selected: vision.frames_selected, outfits };
+           retrieval: retrievalMode(), frames_selected: vision.frames_selected, outfits };
 }
 
 /** Run the whole chain and attach catalogue matches per detected garment. */
@@ -155,6 +190,8 @@ export async function runSearch(
   mime?: string,
 ): Promise<SearchOutput> {
   const vision = await analyzeImage(visionUrl, bytes, filename, mime);
-  const results = vision.garments.map((g) => ({ garment: g, matches: matchFor(g, filters) }));
-  return { model: vision.model, cost_usd: vision.cost_usd, warnings: vision.warnings, results };
+  const results = await Promise.all(
+    vision.garments.map(async (g) => ({ garment: g, matches: await matchFor(g, filters) })),
+  );
+  return { model: vision.model, cost_usd: vision.cost_usd, warnings: vision.warnings, retrieval: retrievalMode(), results };
 }

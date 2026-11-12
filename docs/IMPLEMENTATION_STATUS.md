@@ -14,7 +14,7 @@ _Last updated: 2026-11-12_
 | 4 | Garment detection/segmentation | 🟡 | **Strategy A (Gemini VLM) implemented & live.** GroundingDINO+SAM2 / SAM3 = registry stubs ⛔ (weights). |
 | 5 | Fashion attribute taxonomy + extraction | ✅ | Versioned taxonomy + strict JSON via Gemini; evidence/confidence/unknown. |
 | 6 | Catalogue engine | 🟡 | Schema + CSV/JSON importer + seed catalogue. Shopify/Woo = ⛔ (merchant auth). |
-| 7 | Visual search index (embeddings, pgvector) | ✅ | **FashionCLIP (512-d) integrated & verified**: `/v1/embed/image`, per-garment crop embeddings in analyze, 24 product embeddings precomputed. Hybrid retrieval via in-process cosine; pgvector migration (0002) + loader script ready (live ANN not stood up this session). SigLIP 2 benchmark = ⬜. |
+| 7 | Visual search index (embeddings, pgvector) | ✅ | **FashionCLIP (512-d) + pgvector HNSW live & verified**: `/v1/embed/image`, per-garment crop embeddings, 24 products+embeddings loaded into Postgres, ANN cosine query correct, HNSW index confirmed usable. Web retrieves via pgvector (`USE_PGVECTOR=true`) with in-process fallback. SigLIP 2 benchmark = ⬜. |
 | 8 | Reranking (two-stage, match buckets) | ✅ | Two-stage: attribute candidates → **hybrid fuse (visual ⊕ attribute)** + hard-mismatch penalties + buckets. Verified end-to-end. Dedicated VLM reranker = optional ⬜. |
 | 9 | Outfit composition (budget beam search) | 🟡 | Composer scaffold over shortlists. |
 | 10 | Consumer UI | 🟡 | Upload → detect → match flow (minimal). Full screen set pending. |

@@ -3,6 +3,7 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS citext;
 
 -- ---------- Auth & users ----------------------------------------------------
 CREATE TABLE IF NOT EXISTS app_user (
