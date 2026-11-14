@@ -13,6 +13,8 @@ export interface PgClientLike {
 
 export interface AnnOptions {
   category?: string;
+  /** Several allowed categories (e.g. a top may match a co-ord set). Overrides `category`. */
+  categories?: string[];
   limit?: number;
 }
 
@@ -29,13 +31,17 @@ export async function annSearch(
   const vec = `[${queryEmbedding.join(",")}]`;
   const params: unknown[] = [vec];
   let where = "WHERE p.deleted_at IS NULL";
-  if (opts.category) {
+  if (opts.categories?.length) {
+    params.push(opts.categories);
+    where += ` AND p.category = ANY($${params.length}::text[])`;
+  } else if (opts.category) {
     params.push(opts.category);
     where += ` AND p.category = $${params.length}`;
   }
   const limit = Math.max(1, Math.min(opts.limit ?? 100, 500));
   const sql = `
     SELECT p.attributes AS product,
+           p.id::text AS db_id,
            1 - (e.embedding <=> $1::vector) AS visual_similarity
     FROM product_embedding e
     JOIN product p ON p.id = e.product_id
@@ -44,7 +50,7 @@ export async function annSearch(
     LIMIT ${limit}`;
   const { rows } = await db.query(sql, params);
   return rows.map((r) => ({
-    product: r.product as SeedProduct,
+    product: { ...(r.product as SeedProduct), db_id: r.db_id as string | undefined },
     visual_similarity: Number(r.visual_similarity),
   }));
 }

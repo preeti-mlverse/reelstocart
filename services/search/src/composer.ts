@@ -37,7 +37,11 @@ export function composeOutfit(
       // option: skip this slot (only allowed if not essential)
       if (!slot.essential) next.push(partial);
       for (const opt of opts) {
-        const price = opt.product.price_inr ?? 0;
+        // One product can cover several slots (a co-ord set matches both the top and
+        // the bottom): it is bought once, so it is only paid for once.
+        const key = opt.product.db_id ?? opt.product.id;
+        const owned = partial.items.some((i) => (i.match.product.db_id ?? i.match.product.id) === key);
+        const price = owned ? 0 : opt.product.price_inr ?? 0;
         const cost = partial.cost + price;
         if (cost > budgetInr) continue;
         next.push({

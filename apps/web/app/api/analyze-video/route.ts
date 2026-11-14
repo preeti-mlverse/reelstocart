@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runVideoSearch } from "@/lib/orchestrate";
 import { validateUpload } from "@rtc/shared";
+import { clientIp, rateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -14,6 +15,14 @@ const LIMITS = {
 };
 
 export async function POST(req: NextRequest) {
+  // Abuse/cost guard: every analyze call spends a paid vision-model request.
+  const rl = rateLimit(`video:${clientIp(req)}`, Number(process.env.ANALYZE_VIDEO_RATE_LIMIT_PER_MIN || 4), 60000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: { code: "RATE_LIMITED", message: `Too many requests — try again in ${rl.retryAfter}s`, retriable: true } },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
   const form = await req.formData().catch(() => null);
   if (!form) return err("BAD_REQUEST", "expected multipart form-data", 400);
 

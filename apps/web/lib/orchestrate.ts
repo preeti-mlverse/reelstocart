@@ -3,9 +3,10 @@
  * image bytes -> vision service (garments+attributes) -> matcher over catalogue.
  */
 import {
-  matchGarment, rerankHybrid, rerankWithVisual, annSearch, loadSeedCatalogue, loadSeedEmbeddings,
+  matchGarment, rerankHybrid, rerankWithVisual, annSearch, compatibleCategories, loadSeedCatalogue, loadSeedEmbeddings, composeOutfit,
   type QueryGarment, type ScoredMatch, type MatchFilters, type SeedProduct, type EmbeddingMap,
 } from "@rtc/search";
+import { pool as sharedPool, logSearchJob } from "./db";
 
 // Load catalogue + embeddings once per server process.
 let _catalogue: SeedProduct[] | null = null;
@@ -15,14 +16,8 @@ const embeddings = () => (_embeddings ??= loadSeedEmbeddings());
 
 // Optional pgvector retrieval (Phase 7). Enabled by USE_PGVECTOR=true + DATABASE_URL.
 const usePgvector = () => process.env.USE_PGVECTOR === "true" && !!process.env.DATABASE_URL;
-let _pool: unknown = null;
 async function getPool() {
-  if (!_pool) {
-    const pg = await import("pg");
-    const { Pool } = pg.default ?? (pg as any);
-    _pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  }
-  return _pool as { query(t: string, p?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
+  return (await sharedPool()) as unknown as { query(t: string, p?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 }
 
 /**
@@ -37,7 +32,7 @@ async function matchFor(g: VisionGarment, filters: MatchFilters): Promise<Scored
   if (g.embedding && usePgvector()) {
     try {
       const pool = await getPool();
-      const candidates = await annSearch(pool, g.embedding, { category: g.category, limit: 100 });
+      const candidates = await annSearch(pool, g.embedding, { categories: compatibleCategories(g.category), limit: 100 });
       if (candidates.length) return rerankWithVisual(q, candidates, filters, undefined, 12);
     } catch {
       /* fall through to in-process */
@@ -78,13 +73,65 @@ export interface GarmentWithMatches {
   matches: ScoredMatch[];
 }
 
+export interface ComposedLook {
+  items: { slot: string; category: string; match: ScoredMatch }[];
+  total_inr: number;
+  budget_inr: number;
+  coverage: number;
+  missing_slots: string[];
+  within_budget: boolean;
+}
+
 export interface SearchOutput {
   model: VisionResponse["model"];
   cost_usd: number;
   warnings: string[];
   retrieval: string;
+  job_id: string | null;
   results: GarmentWithMatches[];
+  look: ComposedLook | null;
 }
+
+export interface SearchOptions {
+  /** Total budget for the whole look (Phase 9 composer). */
+  budget_inr?: number;
+}
+
+/** Phase 9: assemble the best complete look under a total budget (needs >= 2 garments). */
+export function buildLook(results: GarmentWithMatches[], budget?: number): ComposedLook | null {
+  if (!budget || budget <= 0 || results.length < 2) return null;
+  const catOf = new Map(results.map((r) => [r.garment.garment_id, r.garment.category]));
+  const out = composeOutfit(
+    results.map((r) => ({ slot: r.garment.garment_id, essential: false, options: r.matches })),
+    budget,
+  );
+  // A co-ord set can fill both the top and bottom slot: show it once, naming both pieces.
+  const merged = new Map<string, { slot: string; category: string; match: ScoredMatch }>();
+  for (const i of out.items) {
+    const key = i.match.product.db_id ?? i.match.product.id;
+    const cat = catOf.get(i.slot) ?? i.slot;
+    const prev = merged.get(key);
+    if (prev) prev.category = `${prev.category} + ${cat}`;
+    else merged.set(key, { slot: i.slot, category: cat, match: i.match });
+  }
+  return {
+    items: [...merged.values()],
+    total_inr: out.total_inr,
+    budget_inr: budget,
+    coverage: out.coverage,
+    missing_slots: out.missing_slots.map((m) => catOf.get(m) ?? m),
+    within_budget: out.within_budget,
+  };
+}
+
+const dbIdsOf = (groups: GarmentWithMatches[]) =>
+  groups.flatMap((r) => r.matches.slice(0, 8).map((m) => m.product.db_id).filter((x): x is string => !!x));
+
+const summaryOf = (groups: GarmentWithMatches[]) =>
+  groups.map((r) => ({
+    category: r.garment.category,
+    top: r.matches.slice(0, 3).map((m) => ({ id: m.product.db_id ?? m.product.id, label: m.match_label, score: +m.score.toFixed(3) })),
+  }));
 
 /** Call the FastAPI vision service with an image. */
 export async function analyzeImage(
@@ -135,6 +182,7 @@ export interface VideoSearchOutput {
   cost_usd: number;
   warnings: string[];
   retrieval: string;
+  job_id: string | null;
   frames_selected: VisionVideoResponse["frames_selected"];
   outfits: OutfitWithMatches[];
 }
@@ -164,6 +212,7 @@ export async function runVideoSearch(
   filename?: string,
   mime?: string,
 ): Promise<VideoSearchOutput> {
+  const t0 = Date.now();
   const vision = await analyzeVideo(visionUrl, bytes, filename, mime);
   const outfits: OutfitWithMatches[] = await Promise.all(
     vision.outfits.map(async (o) => ({
@@ -177,8 +226,13 @@ export async function runVideoSearch(
       ),
     })),
   );
+  const all = outfits.flatMap((o) => o.garments);
+  const job_id = await logSearchJob({
+    kind: "video", cost_usd: vision.cost_usd, model: vision.model.name, latency_ms: Date.now() - t0,
+    summary: { outfits: outfits.length, garments: summaryOf(all) }, productIds: dbIdsOf(all),
+  });
   return { model: vision.model, cost_usd: vision.cost_usd, warnings: vision.warnings,
-           retrieval: retrievalMode(), frames_selected: vision.frames_selected, outfits };
+           retrieval: retrievalMode(), job_id, frames_selected: vision.frames_selected, outfits };
 }
 
 /** Run the whole chain and attach catalogue matches per detected garment. */
@@ -188,10 +242,17 @@ export async function runSearch(
   filters: MatchFilters = {},
   filename?: string,
   mime?: string,
+  opts: SearchOptions = {},
 ): Promise<SearchOutput> {
+  const t0 = Date.now();
   const vision = await analyzeImage(visionUrl, bytes, filename, mime);
   const results = await Promise.all(
     vision.garments.map(async (g) => ({ garment: g, matches: await matchFor(g, filters) })),
   );
-  return { model: vision.model, cost_usd: vision.cost_usd, warnings: vision.warnings, retrieval: retrievalMode(), results };
+  const look = buildLook(results, opts.budget_inr);
+  const job_id = await logSearchJob({
+    kind: "image", cost_usd: vision.cost_usd, model: vision.model.name, latency_ms: Date.now() - t0,
+    summary: { garments: summaryOf(results), budget_inr: opts.budget_inr ?? null }, productIds: dbIdsOf(results),
+  });
+  return { model: vision.model, cost_usd: vision.cost_usd, warnings: vision.warnings, retrieval: retrievalMode(), job_id, results, look };
 }

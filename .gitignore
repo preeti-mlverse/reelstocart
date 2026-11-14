@@ -37,3 +37,6 @@ Thumbs.db
 # test / coverage
 coverage/
 .vitest/
+
+# evaluation scratch
+.eval-tmp/
